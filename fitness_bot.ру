@@ -1,0 +1,26 @@
+import telebot
+
+# Вставьте ваш токен сюда
+TOKEN = "8635661632:AAH7iapP1hoBAQI8TDJLPLtRof-NgeG9UYw"
+
+bot = telebot.TeleBot(TOKEN)
+
+# Команда /start
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, 
+    """👋 Привет! Я твой личный фитнес-помощник!
+
+🏋️ Я помогу тебе с:
+- 🥗 Питанием и калориями
+- 💪 Тренировками
+- 📊 Отслеживанием прогресса
+
+Выбери что тебя интересует:
+/food - Питание и калории
+/workout - Тренировки
+/progress - Мой прогресс""")
+
+# Запуск бота
+print("Бот запущен!")
+bot.polling()
