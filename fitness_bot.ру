@@ -1,11 +1,13 @@
 import telebot
+import os
 import threading
 import time
 from datetime import datetime
 from telebot import types
 
-TOKEN = "8635661632:AAH7iapP1hoBAQI8TDJLPLtRof-NgeG9UYw"
+TOKEN = os.getenv('TOKEN')
 bot = telebot.TeleBot(TOKEN)
+
 
 users = {}
 
