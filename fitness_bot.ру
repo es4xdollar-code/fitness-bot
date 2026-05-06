@@ -1,26 +1,926 @@
 import telebot
+import threading
+import time
+from datetime import datetime
+from telebot import types
 
-# Вставьте ваш токен сюда
 TOKEN = "8635661632:AAH7iapP1hoBAQI8TDJLPLtRof-NgeG9UYw"
-
 bot = telebot.TeleBot(TOKEN)
 
-# Команда /start
+users = {}
+
+def get_user(user_id):
+    if user_id not in users:
+        users[user_id] = {
+            'calories_today': 0,
+            'weight': None,
+            'height': None,
+            'age': None,
+            'gender': None,
+            'goal': None,
+            'norm': None,
+            'food_log': [],
+            'water_reminder': False,
+            'sleep_reminder': False,
+            'wake_hour': 7,
+            'sleep_hour': 23,
+            'chat_id': None
+        }
+    return users[user_id]
+
+def calc_norm(weight, height, age, gender, goal):
+    if gender == 'male':
+        bmr = 10 * weight + 6.25 * height - 5 * age + 5
+    else:
+        bmr = 10 * weight + 6.25 * height - 5 * age - 161
+    tdee = bmr * 1.55
+    if goal == 'loss':
+        return int(tdee - 500)
+    elif goal == 'mass':
+        return int(tdee + 400)
+    else:
+        return int(tdee)
+
+def progress_bar(current, total):
+    percent = min(int((current / total) * 10), 10)
+    bar = '🟩' * percent + '⬜' * (10 - percent)
+    return bar
+
+def main_menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🥗 Питание', '💪 Тренировки')
+    markup.row('📊 Мой профиль', '💧 Вода и сон')
+    markup.row('❓ Помощь')
+    bot.send_message(message.chat.id, "🏠 Главное меню\nВыбери раздел 👇", reply_markup=markup)
+
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, 
-    """👋 Привет! Я твой личный фитнес-помощник!
+    get_user(message.chat.id)
+    bot.send_message(message.chat.id,
+f"""👋 Привет, {message.from_user.first_name}!
 
-🏋️ Я помогу тебе с:
-- 🥗 Питанием и калориями
-- 💪 Тренировками
-- 📊 Отслеживанием прогресса
+Я твой персональный фитнес-помощник 🏋️
 
-Выбери что тебя интересует:
-/food - Питание и калории
-/workout - Тренировки
-/progress - Мой прогресс""")
+Я помогу тебе:
+📊 Считать калории точно под твои параметры
+🥗 Подобрать план питания под цель
+🍽 Найти здоровые рецепты
+💪 Составить план тренировок
+💧 Напомнить пить воду и спать вовремя
 
-# Запуск бота
-print("Бот запущен!")
-bot.polling()
+Давай начнём с твоего профиля!""")
+    ask_gender(message)
+
+def ask_gender(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('👨 Мужчина', '👩 Женщина')
+    bot.send_message(message.chat.id, "Укажи свой пол:", reply_markup=markup)
+    bot.register_next_step_handler(message, get_gender)
+
+def get_gender(message):
+    user = get_user(message.chat.id)
+    if '👨' in message.text:
+        user['gender'] = 'male'
+    elif '👩' in message.text:
+        user['gender'] = 'female'
+    else:
+        bot.send_message(message.chat.id, "Выбери из кнопок 👆")
+        ask_gender(message)
+        return
+    bot.send_message(message.chat.id, "Сколько тебе лет? Напиши число:")
+    bot.register_next_step_handler(message, get_age)
+
+def get_age(message):
+    user = get_user(message.chat.id)
+    try:
+        age = int(message.text)
+        if 10 <= age <= 100:
+            user['age'] = age
+            bot.send_message(message.chat.id, "Какой у тебя вес? (кг, например: 75)")
+            bot.register_next_step_handler(message, get_weight)
+        else:
+            bot.send_message(message.chat.id, "Введи реальный возраст!")
+            bot.register_next_step_handler(message, get_age)
+    except:
+        bot.send_message(message.chat.id, "Введи число! Например: 25")
+        bot.register_next_step_handler(message, get_age)
+
+def get_weight(message):
+    user = get_user(message.chat.id)
+    try:
+        weight = float(message.text.replace(',', '.'))
+        if 30 <= weight <= 250:
+            user['weight'] = weight
+            bot.send_message(message.chat.id, "Какой у тебя рост? (см, например: 175)")
+            bot.register_next_step_handler(message, get_height)
+        else:
+            bot.send_message(message.chat.id, "Введи реальный вес!")
+            bot.register_next_step_handler(message, get_weight)
+    except:
+        bot.send_message(message.chat.id, "Введи число! Например: 75")
+        bot.register_next_step_handler(message, get_weight)
+
+def get_height(message):
+    user = get_user(message.chat.id)
+    try:
+        height = float(message.text.replace(',', '.'))
+        if 100 <= height <= 250:
+            user['height'] = height
+            ask_goal(message)
+        else:
+            bot.send_message(message.chat.id, "Введи реальный рост!")
+            bot.register_next_step_handler(message, get_height)
+    except:
+        bot.send_message(message.chat.id, "Введи число! Например: 175")
+        bot.register_next_step_handler(message, get_height)
+
+def ask_goal(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🔥 Похудение', '💪 Набор массы')
+    markup.row('⚖️ Поддержание формы')
+    bot.send_message(message.chat.id, "Какая твоя цель?", reply_markup=markup)
+    bot.register_next_step_handler(message, get_goal)
+
+def get_goal(message):
+    user = get_user(message.chat.id)
+    if '🔥' in message.text:
+        user['goal'] = 'loss'
+        goal_text = 'Похудение'
+    elif '💪' in message.text:
+        user['goal'] = 'mass'
+        goal_text = 'Набор массы'
+    elif '⚖️' in message.text:
+        user['goal'] = 'maintain'
+        goal_text = 'Поддержание формы'
+    else:
+        ask_goal(message)
+        return
+    norm = calc_norm(user['weight'], user['height'], user['age'], user['gender'], user['goal'])
+    user['norm'] = norm
+    bot.send_message(message.chat.id,
+f"""✅ Профиль создан!
+
+⚖️ Вес: {user['weight']} кг
+📏 Рост: {user['height']} см
+🎂 Возраст: {user['age']} лет
+🎯 Цель: {goal_text}
+
+🔥 Твоя норма калорий: {norm} ккал/день""")
+    main_menu(message)
+
+@bot.message_handler(func=lambda m: '📊 Мой профиль' in m.text)
+def show_profile(message):
+    user = get_user(message.chat.id)
+    if not user['weight']:
+        ask_gender(message)
+        return
+    goals = {'loss': '🔥 Похудение', 'mass': '💪 Набор массы', 'maintain': '⚖️ Поддержание'}
+    goal_text = goals.get(user['goal'], 'Не указана')
+    current = user['calories_today']
+    norm = user['norm'] or 2000
+    bar = progress_bar(current, norm)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('✏️ Изменить профиль', '🔙 Назад')
+    bot.send_message(message.chat.id,
+f"""📊 Твой профиль
+
+⚖️ Вес: {user['weight']} кг
+📏 Рост: {user['height']} см
+🎂 Возраст: {user['age']} лет
+🎯 Цель: {goal_text}
+🔥 Норма: {norm} ккал/день
+
+📈 Калории сегодня:
+{bar}
+{current} / {norm} ккал""", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '✏️ Изменить профиль' in m.text)
+def edit_profile(message):
+    ask_gender(message)
+
+FOOD_DB = {
+    'курица': 165, 'куриная грудка': 165, 'говядина': 250,
+    'свинина': 290, 'лосось': 208, 'тунец': 130,
+    'треска': 82, 'яйцо': 155, 'творог': 71,
+    'молоко': 61, 'кефир': 51, 'йогурт': 68,
+    'рис': 130, 'гречка': 132, 'овсянка': 68,
+    'макароны': 138, 'картофель': 77, 'батат': 86,
+    'брокколи': 34, 'огурец': 15, 'помидор': 18,
+    'банан': 89, 'яблоко': 52, 'апельсин': 47,
+    'хлеб': 265, 'масло': 748, 'орехи': 607,
+    'арахисовая паста': 588, 'мёд': 304, 'сахар': 387
+}
+
+@bot.message_handler(func=lambda m: '🥗 Питание' in m.text)
+def food_menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('➕ Добавить приём пищи', '📈 Калории за день')
+    markup.row('📋 План питания', '🍽️ Рецепты')
+    markup.row('🔄 Сбросить день', '🔙 Назад')
+    bot.send_message(message.chat.id, "🥗 Раздел питания\n\nВыбери действие:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '➕ Добавить приём пищи' in m.text)
+def add_food(message):
+    food_list = '\n'.join([f"• {k.capitalize()} — {v} ккал" for k, v in list(FOOD_DB.items())[:15]])
+    bot.send_message(message.chat.id,
+f"""➕ Добавить еду
+
+Напиши продукт и граммы.
+Например: курица 200
+
+📋 Продукты (ккал/100г):
+{food_list}""")
+    bot.register_next_step_handler(message, process_food)
+
+def process_food(message):
+    if any(x in message.text for x in ['🥗', '💪', '📊', '🔙', '➕', '📈', '📋', '🍽', '🔄', '💧', '❓']):
+        bot.process_new_messages([message])
+        return
+    user = get_user(message.chat.id)
+    text = message.text.lower().strip()
+    found = False
+    for food, cal_per_100 in FOOD_DB.items():
+        if food in text:
+            try:
+                digits = ''.join(filter(lambda x: x.isdigit() or x == '.', text.replace(food, '')))
+                grams = float(digits)
+                calories = int(cal_per_100 * grams / 100)
+                user['calories_today'] += calories
+                user['food_log'].append(f"{food.capitalize()} {grams}г — {calories} ккал")
+                norm = user.get('norm') or 2000
+                current = user['calories_today']
+                bar = progress_bar(current, norm)
+                remaining = norm - current
+                bot.send_message(message.chat.id,
+f"""✅ Записал!
+
+🍽 {food.capitalize()} {grams}г
+🔥 {calories} ккал
+
+📊 Прогресс за день:
+{bar}
+{current} / {norm} ккал
+{'✅ Норма выполнена!' if current >= norm else f'Осталось: {remaining} ккал'}""")
+                found = True
+                break
+            except:
+                bot.send_message(message.chat.id, "Напиши так: курица 200")
+                found = True
+                break
+    if not found:
+        bot.send_message(message.chat.id, "❌ Продукт не найден. Попробуй другой из списка.")
+
+@bot.message_handler(func=lambda m: '📈 Калории за день' in m.text)
+def show_calories(message):
+    user = get_user(message.chat.id)
+    current = user['calories_today']
+    norm = user.get('norm') or 2000
+    bar = progress_bar(current, norm)
+    remaining = norm - current
+    log = '\n'.join(user['food_log'][-5:]) if user['food_log'] else 'Пусто'
+    bot.send_message(message.chat.id,
+f"""📈 Калории за сегодня
+
+{bar}
+🔥 Съедено: {current} ккал
+🎯 Норма: {norm} ккал
+{'✅ Норма выполнена!' if current >= norm else f'Осталось: {remaining} ккал'}
+
+📝 Последние записи:
+{log}""")
+
+@bot.message_handler(func=lambda m: '🔄 Сбросить день' in m.text)
+def reset_day(message):
+    user = get_user(message.chat.id)
+    user['calories_today'] = 0
+    user['food_log'] = []
+    bot.send_message(message.chat.id, "✅ День сброшен! Новый день — новый старт! 💪")
+
+@bot.message_handler(func=lambda m: '📋 План питания' in m.text)
+def food_plan(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🔥 На похудение', '💪 На массу')
+    markup.row('⚖️ Поддержание', '🔙 Назад')
+    bot.send_message(message.chat.id, "Выбери план:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '🔥 На похудение' in m.text)
+def plan_loss(message):
+    bot.send_message(message.chat.id,
+"""🔥 ПЛАН НА ПОХУДЕНИЕ
+(1400-1700 ккал/день)
+
+☀️ Завтрак (~400 ккал)
+- Овсянка на воде 100г
+- 2 варёных яйца
+- Яблоко
+
+🕐 Перекус (~150 ккал)
+- Творог 0% 150г
+
+🍽 Обед (~450 ккал)
+- Куриная грудка 150г
+- Овощи на пару
+
+🕓 Перекус (~100 ккал)
+- Кефир 200мл
+
+🌙 Ужин (~350 ккал)
+- Рыба на пару 150г
+- Овощи тушёные
+
+✅ Пей воду 2л | Не ешь после 19:00""")
+
+@bot.message_handler(func=lambda m: '💪 На массу' in m.text)
+def plan_mass(message):
+    bot.send_message(message.chat.id,
+"""💪 ПЛАН НА НАБОР МАССЫ
+(2500-3000 ккал/день)
+
+☀️ Завтрак (~700 ккал)
+- Овсянка на молоке 150г
+- 3 яйца + банан
+
+🕐 Перекус (~400 ккал)
+- Творог 200г + орехи
+
+🍽 Обед (~800 ккал)
+- Курица 250г + рис 200г
+
+🕓 Перекус (~350 ккал)
+- Хлеб с арахисовой пастой
+
+🌙 Ужин (~650 ккал)
+- Говядина 200г + гречка 150г
+
+✅ Пей воду 3л | Ешь каждые 3 часа""")
+
+@bot.message_handler(func=lambda m: '⚖️ Поддержание' in m.text)
+def plan_maintain(message):
+    bot.send_message(message.chat.id,
+"""⚖️ ПЛАН НА ПОДДЕРЖАНИЕ
+(1800-2200 ккал/день)
+
+☀️ Завтрак (~500 ккал)
+- Яичница 3 яйца + хлеб
+
+🕐 Перекус (~250 ккал)
+- Творог 150г + фрукты
+
+🍽 Обед (~600 ккал)
+- Курица 180г + гречка 120г
+
+🕓 Перекус (~150 ккал)
+- Йогурт натуральный
+
+🌙 Ужин (~450 ккал)
+- Рыба 180г + овощи
+
+✅ Пей воду 2л | Баланс БЖУ""")
+
+@bot.message_handler(func=lambda m: '🍽️ Рецепты' in m.text)
+def recipes(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🍳 Завтраки', '🍗 Обеды')
+    markup.row('🥗 Ужины', '🔙 Назад')
+    bot.send_message(message.chat.id, "Выбери категорию:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '🍳 Завтраки' in m.text)
+def breakfast(message):
+    bot.send_message(message.chat.id,
+"""🍳 РЕЦЕПТЫ ЗАВТРАКОВ
+
+1️⃣ Овсянка с бананом — 380 ккал / 10 мин
+- Овсянка 100г + молоко 200мл + банан + мёд
+
+2️⃣ Яичница с овощами — 320 ккал / 10 мин
+- Яйца 3шт + помидор + перец + зелень
+
+3️⃣ Творожные панкейки — 400 ккал / 15 мин
+- Творог 200г + яйца 2шт + овсяная мука 3 ст.л.""")
+
+@bot.message_handler(func=lambda m: '🍗 Обеды' in m.text)
+def lunch(message):
+    bot.send_message(message.chat.id,
+"""🍗 РЕЦЕПТЫ ОБЕДОВ
+
+1️⃣ Курица с рисом — 580 ккал / 40 мин
+- Грудка 200г + рис 150г + специи
+
+2️⃣ Лосось с овощами — 520 ккал / 25 мин
+- Лосось 200г + брокколи + лимон
+
+3️⃣ Говядина с гречкой — 650 ккал / 50 мин
+- Говядина 150г + гречка 100г + овощи""")
+
+@bot.message_handler(func=lambda m: '🥗 Ужины' in m.text)
+def dinner(message):
+    bot.send_message(message.chat.id,
+"""🥗 РЕЦЕПТЫ УЖИНОВ
+
+1️⃣ Греческий салат с курицей — 380 ккал / 15 мин
+- Курица 150г + огурец + помидор + фета
+
+2️⃣ Рыба на пару — 280 ккал / 25 мин
+- Треска 200г + цукини + лимон
+
+3️⃣ Творог с зеленью — 200 ккал / 5 мин
+- Творог 200г + огурец + укроп""")
+
+@bot.message_handler(func=lambda m: '💪 Тренировки' in m.text)
+def workout_menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('📋 План тренировок', '🏋️ Упражнения по мышцам')
+    markup.row('📖 Техника упражнений', '🔙 Назад')
+    bot.send_message(message.chat.id, "💪 Раздел тренировок\n\nВыбери раздел:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '📋 План тренировок' in m.text)
+def workout_plan(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🏠 Дома', '🏋️ В зале')
+    markup.row('🔙 Назад')
+    bot.send_message(message.chat.id, "Где будешь тренироваться?", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '🏠 Дома' in m.text)
+def plan_home(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🔥 Похудение дома', '💪 Масса дома')
+    markup.row('🔙 Назад')
+    bot.send_message(message.chat.id, "Выбери цель:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '🏋️ В зале' in m.text)
+def plan_gym(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🔥 Похудение в зале', '💪 Масса в зале')
+    markup.row('🔙 Назад')
+    bot.send_message(message.chat.id, "Выбери цель:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '🔥 Похудение дома' in m.text)
+def home_loss(message):
+    bot.send_message(message.chat.id,
+"""🏠 ПЛАН ПОХУДЕНИЯ ДОМА
+3 раза в неделю
+
+📅 Понедельник — Кардио + Ноги
+1️⃣ Прыжки на месте — 3х30 сек
+2️⃣ Приседания — 4х20
+3️⃣ Выпады — 3х15 каждая нога
+4️⃣ Ягодичный мостик — 4х20
+5️⃣ Берпи — 3х10
+6️⃣ Планка — 3х45 сек
+
+📅 Среда — Верх тела
+1️⃣ Отжимания — 4х15
+2️⃣ Отжимания узким хватом — 3х12
+3️⃣ Обратные отжимания — 3х15
+4️⃣ Планка — 3х45 сек
+5️⃣ Скручивания — 3х20
+
+📅 Пятница — Всё тело
+1️⃣ Берпи — 4х10
+2️⃣ Приседания с прыжком — 3х15
+3️⃣ Отжимания — 3х12
+4️⃣ Горная лыжница — 3х30 сек
+5️⃣ Планка боковая — 3х30 сек""")
+
+@bot.message_handler(func=lambda m: '💪 Масса дома' in m.text)
+def home_mass(message):
+    bot.send_message(message.chat.id,
+"""🏠 ПЛАН НАБОРА МАССЫ ДОМА
+4 раза в неделю
+
+📅 Пн — Грудь + Трицепс
+1️⃣ Отжимания широким хватом — 4х15
+2️⃣ Отжимания узким хватом — 4х12
+3️⃣ Алмазные отжимания — 3х10
+4️⃣ Обратные отжимания — 4х15
+
+📅 Вт — Ноги
+1️⃣ Приседания — 5х20
+2️⃣ Приседания сумо — 4х15
+3️⃣ Выпады — 4х15 каждая
+4️⃣ Ягодичный мостик — 4х20
+
+📅 Чт — Спина + Бицепс
+1️⃣ Супермен — 4х15
+2️⃣ Тяга бутылок в наклоне — 4х12
+3️⃣ Подъём бутылок на бицепс — 4х15
+
+📅 Сб — Плечи + Пресс
+1️⃣ Жим бутылок стоя — 4х12
+2️⃣ Подъём рук в стороны — 4х15
+3️⃣ Скручивания — 4х20
+4️⃣ Планка — 4х60 сек""")
+
+@bot.message_handler(func=lambda m: '🔥 Похудение в зале' in m.text)
+def gym_loss(message):
+    bot.send_message(message.chat.id,
+"""🏋️ ПЛАН ПОХУДЕНИЯ В ЗАЛЕ
+3-4 раза в неделю
+
+📅 День 1 — Кардио + Ноги
+1️⃣ Приседания со штангой — 4х15
+2️⃣ Жим ногами — 4х15
+3️⃣ Выпады с гантелями — 3х12
+4️⃣ Сгибание ног лёжа — 4х15
+🔥 Кардио — 20 мин эллипсоид
+
+📅 День 2 — Грудь + Трицепс
+1️⃣ Жим штанги лёжа — 4х12
+2️⃣ Жим гантелей под углом — 3х12
+3️⃣ Французский жим — 3х12
+🔥 Кардио — 20 мин велотренажёр
+
+📅 День 3 — Спина + Бицепс
+1️⃣ Тяга штанги в наклоне — 4х12
+2️⃣ Тяга верхнего блока — 4х12
+3️⃣ Подъём гантелей на бицепс — 4х12
+🔥 Кардио — 20 мин беговая дорожка""")
+
+@bot.message_handler(func=lambda m: '💪 Масса в зале' in m.text)
+def gym_mass(message):
+    bot.send_message(message.chat.id,
+"""🏋️ ПЛАН НАБОРА МАССЫ В ЗАЛЕ
+4 раза в неделю
+
+📅 Пн — Грудь + Трицепс
+1️⃣ Жим штанги лёжа — 5х8
+2️⃣ Жим гантелей под углом — 4х10
+3️⃣ Разводка гантелей — 3х12
+4️⃣ Французский жим — 4х10
+
+📅 Вт — Спина + Бицепс
+1️⃣ Становая тяга — 5х5
+2️⃣ Тяга штанги в наклоне — 4х8
+3️⃣ Подтягивания — 4хmax
+4️⃣ Подъём на бицепс — 4х10
+
+📅 Чт — Ноги
+1️⃣ Приседания со штангой — 5х8
+2️⃣ Жим ногами — 4х10
+3️⃣ Румынская тяга — 4х10
+4️⃣ Икры стоя — 5х15
+
+📅 Сб — Плечи + Пресс
+1️⃣ Жим штанги стоя — 4х8
+2️⃣ Подъём гантелей в стороны — 4х12
+3️⃣ Скручивания — 4х20
+4️⃣ Планка — 4х60 сек""")
+
+@bot.message_handler(func=lambda m: '🏋️ Упражнения по мышцам' in m.text)
+def muscles_menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('💪 Грудь', '🔙 Спина')
+    markup.row('🦵 Ноги', '🤜 Руки')
+    markup.row('🏔️ Плечи', '🧘 Пресс')
+    markup.row('🔙 Назад')
+    bot.send_message(message.chat.id, "Выбери группу мышц:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: m.text == '💪 Грудь')
+def chest(message):
+    bot.send_message(message.chat.id,
+"""💪 УПРАЖНЕНИЯ НА ГРУДЬ
+
+🏠 Дома:
+- Отжимания широким хватом — 4х15
+- Отжимания с ногами на стуле — 3х12
+- Алмазные отжимания — 3х10
+
+🏋️ В зале:
+- Жим штанги лёжа — 4-5х8-12
+- Жим гантелей под углом 30° — 3-4х10-12
+- Разводка гантелей лёжа — 3х12-15
+- Кроссовер в блоке — 3х15""")
+
+@bot.message_handler(func=lambda m: m.text == '🔙 Спина')
+def back_muscles(message):
+    bot.send_message(message.chat.id,
+"""🔙 УПРАЖНЕНИЯ НА СПИНУ
+
+🏠 Дома:
+- Супермен — 4х15
+- Тяга бутылок в наклоне — 4х12
+
+🏋️ В зале:
+- Становая тяга — 4-5х5-8
+- Тяга штанги в наклоне — 4х8-10
+- Подтягивания широким хватом — 4хmax
+- Тяга верхнего блока — 4х12""")
+
+@bot.message_handler(func=lambda m: '🦵 Ноги' in m.text)
+def legs(message):
+    bot.send_message(message.chat.id,
+"""🦵 УПРАЖНЕНИЯ НА НОГИ
+
+🏠 Дома:
+- Приседания — 5х20
+- Выпады — 4х15 каждая нога
+- Ягодичный мостик — 4х20
+
+🏋️ В зале:
+- Приседания со штангой — 5х8-10
+- Жим ногами — 4х12
+- Румынская тяга — 4х10
+- Сгибание ног лёжа — 3х12""")
+
+@bot.message_handler(func=lambda m: '🤜 Руки' in m.text)
+def arms(message):
+    bot.send_message(message.chat.id,
+"""🤜 УПРАЖНЕНИЯ НА РУКИ
+
+💪 Бицепс:
+🏠 Подъём бутылок — 4х12
+🏋️ Подъём штанги на бицепс — 4х10
+🏋️ Молотки с гантелями — 3х12
+
+💪 Трицепс:
+🏠 Обратные отжимания от стула — 4х15
+🏠 Алмазные отжимания — 3х10
+🏋️ Французский жим — 4х10
+🏋️ Разгибание блока вниз — 4х12""")
+
+@bot.message_handler(func=lambda m: '🏔️ Плечи' in m.text)
+def shoulders(message):
+    bot.send_message(message.chat.id,
+"""🏔️ УПРАЖНЕНИЯ НА ПЛЕЧИ
+
+🏠 Дома:
+- Жим бутылок стоя — 4х12
+- Подъём рук в стороны — 4х15
+- Отжимания пикой — 3х12
+
+🏋️ В зале:
+- Армейский жим штанги — 4х8-10
+- Подъём гантелей в стороны — 4х12-15
+- Тяга штанги к подбородку — 3х12""")
+
+@bot.message_handler(func=lambda m: '🧘 Пресс' in m.text)
+def abs_workout(message):
+    bot.send_message(message.chat.id,
+"""🧘 УПРАЖНЕНИЯ НА ПРЕСС
+
+1️⃣ Скручивания — 4х20
+2️⃣ Планка — 4х60 сек
+3️⃣ Велосипед — 3х30 сек
+4️⃣ Подъём ног лёжа — 4х15
+5️⃣ Русский твист — 3х20
+6️⃣ Горная лыжница — 3х30 сек
+
+✅ Пресс виден только при низком % жира
+✅ Питание важнее упражнений для пресса!""")
+
+@bot.message_handler(func=lambda m: '📖 Техника упражнений' in m.text)
+def technique_menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('🏋️ Приседания', '💪 Жим лёжа')
+    markup.row('🔝 Становая тяга', '🤸 Отжимания')
+    markup.row('🧘 Планка', '🔙 Назад')
+    bot.send_message(message.chat.id, "Выбери упражнение:", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '🏋️ Приседания' in m.text)
+def squat_technique(message):
+    bot.send_message(message.chat.id,
+"""🏋️ ТЕХНИКА ПРИСЕДАНИЙ
+
+Исходное положение:
+- Ноги на ширине плеч
+- Носки чуть развёрнуты наружу
+
+Выполнение:
+1. Вдох — начинай опускаться
+2. Колени идут по направлению носков
+3. Таз уходит назад и вниз
+4. Опустись до параллели с полом
+5. Выдох на подъёме
+
+❌ Ошибки:
+- Колени внутрь — опасно!
+- Отрыв пяток от пола
+- Округление спины""")
+
+@bot.message_handler(func=lambda m: '💪 Жим лёжа' in m.text)
+def bench_technique(message):
+    bot.send_message(message.chat.id,
+"""💪 ТЕХНИКА ЖИМА ЛЁЖА
+
+Исходное положение:
+- Лёжа на скамье, ноги на полу
+- Хват чуть шире плеч
+
+Выполнение:
+1. Вдох — медленно опускай к груди
+2. Штанга касается нижней части груди
+3. Выдох — жмёшь вверх
+
+❌ Ошибки:
+- Отрыв ягодиц от скамьи
+- Локти широко в стороны
+- Резкое опускание штанги""")
+
+@bot.message_handler(func=lambda m: '🔝 Становая тяга' in m.text)
+def deadlift_technique(message):
+    bot.send_message(message.chat.id,
+"""🔝 ТЕХНИКА СТАНОВОЙ ТЯГИ
+
+Выполнение:
+1. Ноги на ширине бёдер
+2. Спина прямая, грудь вперёд
+3. Вдох, напряги пресс
+4. Толкай пол ногами — поднимайся
+5. Выдох наверху
+
+❌ Ошибки:
+- Округление поясницы — ОПАСНО!
+- Штанга далеко от ног
+- Рывок в начале движения""")
+
+@bot.message_handler(func=lambda m: '🤸 Отжимания' in m.text)
+def pushup_technique(message):
+    bot.send_message(message.chat.id,
+"""🤸 ТЕХНИКА ОТЖИМАНИЙ
+
+Исходное положение:
+- Руки чуть шире плеч
+- Тело — прямая линия
+
+Выполнение:
+1. Вдох — медленно опускайся
+2. Грудь почти касается пола
+3. Локти под углом 45° к телу
+4. Выдох — жмёшь вверх
+
+❌ Ошибки:
+- Провисание таза
+- Локти широко в стороны""")
+
+@bot.message_handler(func=lambda m: '🧘 Планка' in m.text)
+def plank_technique(message):
+    bot.send_message(message.chat.id,
+"""🧘 ТЕХНИКА ПЛАНКИ
+
+Выполнение:
+- Упор на предплечья
+- Тело — прямая линия
+- Напряги пресс и ягодицы
+- Дыши ровно
+
+❌ Ошибки:
+- Таз вверх или вниз
+- Задержка дыхания
+
+📈 Прогрессия:
+Неделя 1 — 3х20 сек
+Неделя 2 — 3х30 сек
+Неделя 3 — 3х45 сек
+Неделя 4 — 3х60 сек""")
+
+@bot.message_handler(func=lambda m: '💧 Вода и сон' in m.text)
+def reminders_menu(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('💧 Напоминания воды', '🌙 Напоминания сна')
+    markup.row('⏰ Мои напоминания', '❌ Отключить всё')
+    markup.row('🔙 Назад')
+    bot.send_message(message.chat.id,
+"""💧 Вода и сон
+
+Я буду напоминать тебе:
+💧 Пить воду каждые 2 часа
+🌙 Ложиться спать вовремя""", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: '💧 Напоминания воды' in m.text)
+def water_setup(message):
+    bot.send_message(message.chat.id,
+"💧 В котором часу просыпаешься?\nНапиши число, например: 7")
+    bot.register_next_step_handler(message, set_water_start)
+
+def set_water_start(message):
+    try:
+        hour = int(message.text.strip())
+        if 4 <= hour <= 12:
+            user = get_user(message.chat.id)
+            user['wake_hour'] = hour
+            user['water_reminder'] = True
+            user['chat_id'] = message.chat.id
+            bot.send_message(message.chat.id,
+f"""✅ Напоминания воды включены!
+
+⏰ Начну с {hour}:00
+💧 Каждые 2 часа до 22:00
+
+Норма:
+👨 Мужчины — 2.5-3 литра
+👩 Женщины — 2-2.5 литра""")
+        else:
+            bot.send_message(message.chat.id, "Введи час от 4 до 12!")
+            bot.register_next_step_handler(message, set_water_start)
+    except:
+        bot.send_message(message.chat.id, "Напиши просто число! Например: 7")
+        bot.register_next_step_handler(message, set_water_start)
+
+@bot.message_handler(func=lambda m: '🌙 Напоминания сна' in m.text)
+def sleep_setup(message):
+    bot.send_message(message.chat.id,
+"🌙 В котором часу хочешь ложиться спать?\nНапиши число, например: 23")
+    bot.register_next_step_handler(message, set_sleep_time)
+
+def set_sleep_time(message):
+    try:
+        hour = int(message.text.strip())
+        if 18 <= hour <= 24 or hour == 0:
+            user = get_user(message.chat.id)
+            user['sleep_hour'] = hour
+            user['sleep_reminder'] = True
+            user['chat_id'] = message.chat.id
+            bot.send_message(message.chat.id,
+f"""✅ Напоминания сна включены!
+
+🌙 Буду напоминать в {hour}:00
+⚠️ За 30 минут предупрежу!
+
+Советы:
+✅ Не смотри телефон за час до сна
+✅ Проветри комнату
+✅ Норма сна — 7-9 часов""")
+        else:
+            bot.send_message(message.chat.id, "Введи час от 18 до 24!")
+            bot.register_next_step_handler(message, set_sleep_time)
+    except:
+        bot.send_message(message.chat.id, "Напиши просто число! Например: 23")
+        bot.register_next_step_handler(message, set_sleep_time)
+
+@bot.message_handler(func=lambda m: '⏰ Мои напоминания' in m.text)
+def show_reminders(message):
+    user = get_user(message.chat.id)
+    water = '✅ Включены' if user.get('water_reminder') else '❌ Выключены'
+    sleep = '✅ Включены' if user.get('sleep_reminder') else '❌ Выключены'
+    bot.send_message(message.chat.id,
+f"""⏰ Мои напоминания
+
+💧 Вода: {water}
+🕐 Начало: {user.get('wake_hour', '—')}:00
+
+🌙 Сон: {sleep}
+🕙 Время: {user.get('sleep_hour', '—')}:00""")
+
+@bot.message_handler(func=lambda m: '❌ Отключить всё' in m.text)
+def disable_reminders(message):
+    user = get_user(message.chat.id)
+    user['water_reminder'] = False
+    user['sleep_reminder'] = False
+    bot.send_message(message.chat.id, "❌ Все напоминания отключены!")
+
+@bot.message_handler(func=lambda m: '❓ Помощь' in m.text)
+def help_msg(message):
+    bot.send_message(message.chat.id,
+"""❓ Помощь
+
+🥗 Питание — калории, планы, рецепты
+💪 Тренировки — планы, упражнения, техника
+💧 Вода и сон — напоминания
+📊 Профиль — твои параметры
+
+Начать заново — /start""")
+
+@bot.message_handler(func=lambda m: '🔙 Назад' in m.text)
+def go_back(message):
+    main_menu(message)
+
+def send_reminders():
+    while True:
+        now = datetime.now()
+        current_hour = now.hour
+        current_minute = now.minute
+        for user_id, user in list(users.items()):
+            chat_id = user.get('chat_id')
+            if not chat_id:
+                continue
+            if user.get('water_reminder'):
+                wake = user.get('wake_hour', 7)
+                if wake <= current_hour <= 22 and current_minute == 0:
+                    if (current_hour - wake) % 2 == 0:
+                        try:
+                            bot.send_message(chat_id,
+"💧 Время пить воду!\n\nВыпей стакан воды прямо сейчас 🥛\n✅ Ускоряет метаболизм\n✅ Улучшает самочувствие")
+                        except:
+                            pass
+            if user.get('sleep_reminder'):
+                sleep_hour = user.get('sleep_hour', 23)
+                warn_hour = (sleep_hour - 1) % 24
+                if current_hour == warn_hour and current_minute == 30:
+                    try:
+                        bot.send_message(chat_id,
+f"🌙 Через 30 минут пора спать!\n\nГотовься ко сну:\n📵 Отложи телефон\n🪟 Проветри комнату\n😴 Ложись в {sleep_hour}:00")
+                    except:
+                        pass
+                if current_hour == sleep_hour and current_minute == 0:
+                    try:
+                        bot.send_message(chat_id,
+"🌙 Пора спать!\n\nХорошего сна! 😴\nМышцы растут во сне! 💪")
+                    except:
+                        pass
+        time.sleep(60)
+
+reminder_thread = threading.Thread(target=send_reminders, daemon=True)
+reminder_thread.start()
+
+print("✅ Бот запущен!")
+bot.polling(none_stop=True)
