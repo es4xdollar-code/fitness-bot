@@ -1,5 +1,5 @@
 {
   "deploy": {
-    "startCommand": "ls /app && python /app/fitness_bot.py"
+    "startCommand": "/app/.venv/bin/python /app/fitness_bot.py"
   }
 }
