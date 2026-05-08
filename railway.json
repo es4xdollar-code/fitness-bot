@@ -1,5 +1,5 @@
 {
   "deploy": {
-    "startCommand": "cd /app/app && python fitness_bot.py"
+    "startCommand": "cd /app && python fitness_bot.py"
   }
 }
