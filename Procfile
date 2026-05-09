@@ -1,1 +1,1 @@
-web: python fitness_bot.py
+worker: python fitness_bot.py
